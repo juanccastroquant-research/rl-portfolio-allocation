@@ -122,7 +122,3 @@ After a full run, `results/` contains:
 - Results are reported on a single test window (2019–2021, which includes the COVID-19 crash) — a demanding but idiosyncratic stress test. Treat results as indicative rather than fully generalizable.
 - Validation Sharpe is noisy across checkpoints; the best-performing checkpoint by validation Sharpe is not necessarily the one from the final training episode.
 - The discrete action space is a fixed candidate set of portfolios (seeded for reproducibility), not a continuously learned weight vector — see `agent.py`'s `build_action_space()`.
-
-## License
-
-Add a license of your choice (e.g. MIT) here.
