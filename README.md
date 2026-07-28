@@ -1,294 +1,128 @@
 # DQN Portfolio Management
 
-A reinforcement-learning framework for dynamic portfolio allocation, based on
-*"Reinforcement Learning in Portfolio Management with Sharpe Ratio Rewarding
-Based Framework."* Two Deep Q-Network (DQN) agents — one rewarded on rolling
-Sharpe ratio, one on raw daily return — are trained on historical OHLCV data
-and benchmarked against Mean-Variance Optimization (MVO) and a naïve
-equal-weight buy-and-hold strategy.
+A reinforcement-learning approach to portfolio allocation, implementing and extending the paper *"Reinforcement Learning in Portfolio Management with Sharpe Ratio Rewarding Based Framework."* A Deep Q-Network (DQN) agent learns to allocate capital across a 10-asset European energy universe, trained on Sharpe-ratio and/or raw-return rewards, and benchmarked against Mean-Variance Optimization (MVO) and a naïve equal-weight buy-and-hold strategy.
 
-**Asset universe:** 10 European energy stocks — Shell (`SHEL`), BP (`BP`),
-TotalEnergies (`TTE`), Enel (`ENEL.MI`), Iberdrola (`IBE.MC`), RWE (`RWE.DE`),
-E.ON (`EOAN.DE`), Equinor (`EQNR`), Ørsted (`ORSTED.CO`), Repsol (`REP.MC`).
-Note: `SHEL`, `BP`, `TTE`, `EQNR` are USD-denominated US listings; `ENEL.MI`,
-`IBE.MC`, `RWE.DE`, `EOAN.DE`, `REP.MC` are EUR-denominated; `ORSTED.CO` is
-DKK-denominated. Three currencies are mixed into one return/covariance matrix
-with no FX conversion applied anywhere in the pipeline — see **Known
-limitations** below.
+## Results (Test Set: Nov 2019 – Nov 2021)
 
-**Data window:**
-| Split | Window | Purpose |
+| Strategy | Annual Return | Total Return | Sharpe Ratio | Max Drawdown | Daily Ret Std |
+|---|---|---|---|---|---|
+| MVO | 15.79% | 31.76% | 0.363 | 42.77% | 2.54% |
+| Naive (equal-weight, buy & hold) | 10.79% | 21.27% | 0.324 | 40.43% | 1.87% |
+| **DQN-SHARPE** | **28.20%** | **59.55%** | **0.807** | **37.47%** | 2.11% |
+
+The DQN agent trained with the Sharpe-ratio reward more than doubles the risk-adjusted return (Sharpe) of both benchmarks while also achieving the lowest maximum drawdown — see `results/portfolio_performance.png` and `results/drawdowns.png`.
+
+Best validation Sharpe during training: **0.7255** (episode 320 of 800). See `results/training_history.png` for the full learning curve, epsilon decay, and gradient-norm diagnostics.
+
+## Project Structure
+
+```
+.
+├── config.py          # All hyperparameters, data splits, asset universe
+├── data.py            # Download, preprocess, and split OHLCV data (Yahoo Finance)
+├── environment.py      # Gym-style PortfolioEnv (state, action, reward)
+├── agent.py            # DQN agent, Q-network, replay buffer (uniform + PER)
+├── mvo.py              # Mean-Variance Optimization & naive benchmarks
+├── train.py             # Training loop with validation-based checkpointing
+├── evaluate.py          # Test-set evaluation, plots, results reporting
+├── main.py              # End-to-end pipeline: train → validate → evaluate
+├── checkpoints/          # Saved model weights (created at runtime)
+└── results/              # Metrics, plots, and text reports (created at runtime)
+```
+
+## Methodology
+
+### Asset Universe
+10 European energy-sector equities: Shell (SHEL), BP, TotalEnergies (TTE), Enel (ENEL.MI), Iberdrola (IBE.MC), RWE (RWE.DE), E.ON (EOAN.DE), Equinor (EQNR), Ørsted (ORSTED.CO), and Repsol (REP.MC).
+
+### Data Split
+Because Ørsted only IPO'd in June 2016, the usable joint history across all 10 tickers starts there rather than the paper's original 2006 start date. The data is split chronologically into three non-overlapping windows:
+
+| Split | Range | Purpose |
 |---|---|---|
-| Train | Nov 2006 – Nov 2017 | DQN training / replay buffer |
-| Validation | Nov 2017 – Nov 2019 | Model checkpointing, MVO rebalance-frequency selection — **never used to report final numbers** |
-| Test | Nov 2019 – Nov 2021 | Final, single-pass evaluation only |
+| Train | 2016-06-15 → 2018-11-06 | Agent training |
+| Validation | 2018-11-07 → 2019-11-06 | Checkpoint selection & MVO rebalance-frequency selection |
+| Test | 2019-11-07 → 2021-11-06 | Final, single-pass evaluation only |
 
-The train/test dates match the paper's original split; the final two years of
-the paper's training window are now carved out as a validation split (see
-**Train / validation / test discipline** below for why).
+The test set is never used for any decision (checkpointing, hyperparameters, rebalance frequency) prior to the final evaluation pass in `main.py` / `evaluate.py`.
 
----
+### State & Action Space
+- **State**: a `(10 stocks × 5 OHLCV features × 10-day window)` tensor, matching the paper's 500-input specification.
+- **Action**: a discrete candidate set of long-only portfolio weight vectors (single-asset anchors, equal-weight anchors, and Dirichlet-sampled random portfolios), selected via ε-greedy / greedy argmax over Q-values.
 
-## How to run
+### Reward
+Two reward formulations are supported (`config.AGENT`):
+- **DQN-SHARPE**: rolling 20-day Sharpe ratio of portfolio returns.
+- **DQN-RETURN**: scaled daily portfolio return (scaled ×50 to match gradient magnitude with the Sharpe reward).
 
+Both reward types are optionally combined with:
+- A **transaction-cost penalty** (5 bps, turnover-based), applied identically to DQN, MVO, and Naive so all strategies compete on equal footing.
+- A **concentration penalty** (Herfindahl-Hirschman Index-based), discouraging the agent from over-concentrating into a small number of assets.
+
+### Agent
+A standard (non-dueling) fully-connected Q-network (`[512, 256, 128]` hidden layers, ReLU, dropout), trained with Double-DQN targets, Adam + cosine-annealed learning rate, gradient clipping, and a uniform experience replay buffer (Prioritized Experience Replay is implemented but disabled by default, matching the paper).
+
+### Model Selection
+Every `VALIDATION_INTERVAL` episodes, a greedy pass is run over the validation split; the checkpoint with the best validation Sharpe ratio is kept. The MVO benchmark's rebalance frequency (daily / weekly / monthly) is likewise chosen on the validation split, via `mvo.select_best_rebalance_freq()`.
+
+## Setup
+
+```bash
+pip install numpy pandas scipy torch matplotlib yfinance
 ```
-python main.py                 # train + evaluate both DQN agents
-python main.py --skip-train    # evaluate only, using saved checkpoints
-python main.py --reward sharpe # train/evaluate a single agent
+
+## Usage
+
+Run the full pipeline (download data → train → validate → evaluate → plot):
+
+```bash
+python main.py
 ```
 
-Or run the individual scripts (`train.py`, `evaluate.py`) directly if you
-only need one stage.
+Train and evaluate only one reward type:
 
----
+```bash
+python main.py --reward sharpe     # or --reward return
+```
 
-## Train / validation / test discipline
+Skip training and evaluate existing checkpoints only:
 
-An earlier version of this codebase tuned several hyperparameters
-(`TRANSACTION_FEE`, `EPISODE_LENGTH`, `CONCENTRATION_PENALTY`, the MVO
-rebalance frequency) by inspecting results on the test set and then changing
-config values in response — a data-snooping loop that quietly invalidates
-the "held-out" test set the moment its results inform a design decision.
+```bash
+python main.py --skip-train
+```
 
-This version closes that loop:
+Run training or evaluation independently:
 
-- **`config.py`** now defines three date ranges: `TRAIN_START`/`TRAIN_END`,
-  `VAL_START`/`VAL_END`, and `TEST_START`/`TEST_END`. `TEST_START`/`TEST_END`
-  are unchanged from the paper.
-- **`train.py`** runs a greedy evaluation pass over the validation split
-  every `VALIDATION_INTERVAL` episodes and overwrites the saved checkpoint
-  only when validation Sharpe improves. The end-of-training "sanity check"
-  pass over the training set is a separate, purely diagnostic step and does
-  not affect which checkpoint is kept.
-- **`mvo.py`** exposes `select_best_rebalance_freq()`, which chooses the MVO
-  rebalance frequency (daily/weekly/monthly) by comparing Sharpe ratios on
-  the validation split, rather than hard-coding a single frequency with no
-  documented rationale.
-- **`main.py`** and **`evaluate.py`** run this validation-based selection
-  first, then evaluate every strategy on the test split exactly once, for
-  the numbers that get reported.
+```bash
+python train.py         # trains whichever REWARD_TYPES are set in config.py
+python evaluate.py       # evaluates saved checkpoints against MVO/Naive on the test set
+python data.py           # downloads data and prints train/val/test shape diagnostics
+```
 
-If you re-tune any hyperparameter, do it against `results/train_history_*.json`'s
-`val_sharpe` entries (or a fresh validation-only run), not against
-`results_summary.txt`'s test-set numbers.
+## Configuration
 
----
+All hyperparameters, data-split dates, and reward/environment options live in `config.py`, including:
+- `AGENT`: `"sharpe"`, `"return"`, or `"both"` — which agent(s) to train/evaluate.
+- `EPISODE_LENGTH`, `NUM_EPISODES`, `LEARNING_RATE`, `GAMMA`, etc. — standard DQN hyperparameters.
+- `TRANSACTION_FEE`, `CONCENTRATION_PENALTY`, `REWARD_SHAPING`, `REWARD_CLIP` — optional environment/reward modifiers (see inline comments in `config.py` for the rationale behind each default).
 
-## File overview
+## Output
 
-### `config.py`
+After a full run, `results/` contains:
+- `results_summary.txt` — full metrics for every strategy plus training diagnostics.
+- `metrics.json` — machine-readable version of the same metrics.
+- `portfolio_performance.png` — normalized portfolio value over the test period.
+- `drawdowns.png` — drawdown curves for all strategies over the test period.
+- `training_history.png` / `train_history_<reward_type>.json` — reward, return, epsilon, gradient-norm, and validation-Sharpe curves over training.
 
-Central hyperparameter file — every other module reads its settings from
-here. Nothing else needs to be edited to change tickers, dates, network
-size, reward type, or the various optional features described below.
+`checkpoints/` contains the best-validation-Sharpe model weights for each trained agent (`dqn_sharpe.pt`, `dqn_return.pt`).
 
-Key groups:
+## Notes & Caveats
 
-- **Data**: `TICKERS`, `TRAIN_START`/`TRAIN_END`, `VAL_START`/`VAL_END`,
-  `TEST_START`/`TEST_END`, `FEATURES` (OHLCV), `WINDOW_SIZE` (10-day
-  lookback).
-- **Environment**: `INITIAL_CAPITAL`, `TRANSACTION_FEE`, `RISK_FREE_RATE_ANN`,
-  `ALLOW_SHORT`.
-- **DQN architecture**: `HIDDEN_LAYERS`, `ACTIVATION`, `DROPOUT_RATE`,
-  `USE_DUELING`.
-- **DQN training**: `LEARNING_RATE`, `GAMMA`, `BATCH_SIZE`,
-  `REPLAY_CAPACITY`, `NUM_EPISODES`, `EPISODE_LENGTH`,
-  `VALIDATION_INTERVAL` (episodes between validation passes for
-  checkpointing).
-- **Exploration**: `EPS_START`/`EPS_END`/`EPS_DECAY` (ε-greedy schedule).
-- **Agent selection**: `AGENT = "sharpe" | "return" | "both"` — the single
-  switch that controls which agent(s) train/evaluate.
-- **Reward shaping toggles** (all off by default, matching the paper):
-  `REWARD_SHAPING`, `CONCENTRATION_PENALTY`, `REWARD_CLIP`,
-  `USE_DIFFERENTIAL_SHARPE`.
-- **MVO benchmark**: `MVO_REBALANCE_FREQ` — a fallback default only; the
-  pipeline normally overrides this via `select_best_rebalance_freq()` on
-  the validation split.
+- Results are reported on a single test window (2019–2021, which includes the COVID-19 crash) — a demanding but idiosyncratic stress test. Treat results as indicative rather than fully generalizable.
+- Validation Sharpe is noisy across checkpoints; the best-performing checkpoint by validation Sharpe is not necessarily the one from the final training episode.
+- The discrete action space is a fixed candidate set of portfolios (seeded for reproducibility), not a continuously learned weight vector — see `agent.py`'s `build_action_space()`.
 
-### `data.py`
+## License
 
-Downloads and preprocesses market data.
-
-- `download_data()` — pulls OHLCV data via `yfinance` for all tickers over
-  the full date range. Explicitly reindexes the resulting columns to match
-  the order of `TICKERS` — yfinance's own column ordering for multi-ticker
-  downloads is not guaranteed to match the list you passed in (it is often
-  alphabetical instead), and every downstream reshape assumes column *N*
-  corresponds to `TICKERS[N]`.
-- `compute_pct_change()` — converts prices to daily percentage returns.
-- `get_aligned_pct()` — slices a pct-change `DataFrame` to `[start, end]`
-  and drops the first `WINDOW_SIZE` rows, so the result lines up
-  index-for-index with the corresponding `*_states`/`*_closes` arrays.
-  Centralises an offset that was previously duplicated separately in
-  `main.py` and `evaluate.py`.
-- `build_windows()` — reshapes returns into the paper's state tensor:
-  `(n_stocks × n_features × window)` = 10 × 5 × 10 = 500 inputs per state.
-  Clips price features to `±STATE_CLIP` and normalizes volume by a global
-  *training-set* standard deviation, reused (not recomputed) for the
-  validation and test splits.
-- `load_split_data()` — orchestrates the above into aligned train / **validation** /
-  test state tensors and close-price arrays: returns
-  `(train_states, val_states, test_states, train_closes, val_closes, test_closes)`.
-
-### `environment.py`
-
-`PortfolioEnv` — the Gym-style environment the DQN agents interact with.
-Split-agnostic: it's instantiated identically on whichever states/closes
-arrays are passed in (train, validation, or test).
-
-- **State**: a `(10, 5, 10)` window of recent OHLCV percentage changes.
-- **Action**: a portfolio weight vector over the 10 assets (normalized to
-  sum to 1).
-- **Reward**: either
-  * **DQN-Return** — daily portfolio return scaled by `RETURN_REWARD_SCALE`
-    (50×) so its gradient magnitude matches DQN-Sharpe's (raw daily returns
-    are too small on their own and cause gradient collapse), or
-  * **DQN-Sharpe** — a rolling-window Sharpe ratio (`SHARPE_WINDOW` days),
-    clipped to `[-3, 3]` and scaled by `SHARPE_REWARD_SCALE`.
-- **Transaction costs**: each step computes turnover (total absolute change
-  in weights vs. the previous step) and subtracts
-  `TRANSACTION_FEE × turnover` from the return before it affects both the
-  portfolio value and the reward. Disabled by setting `TRANSACTION_FEE = 0.0`
-  in config.
-- **Concentration penalty** (optional, off by default): penalizes reward
-  based on how far the portfolio's Herfindahl-Hirschman Index sits above
-  the equal-weight baseline — discourages the agent from piling into one or
-  two assets. Applies to both reward types when enabled.
-- Other optional, paper-disabled features: reward shaping vs. equal-weight
-  benchmark, reward clipping, and a differential Sharpe ratio formulation
-  (Moody & Saffell, 1998).
-
-### `agent.py`
-
-`DQNAgent` — the learning algorithm.
-
-- **`QNetwork`**: a fully-connected network (`HIDDEN_LAYERS`, ReLU, dropout)
-  with an optional dueling head (`USE_DUELING`, off by default — not in the
-  paper).
-- **Replay buffer**: standard uniform replay (paper-compliant) by default,
-  with an optional prioritized variant (`SumTree` + `PrioritisedReplayBuffer`,
-  enabled via `USE_PER`).
-- **Action space**: since portfolio weights are continuous,
-  `build_action_space()` discretizes them into a fixed set of candidate
-  weight vectors — one-hot single-asset bets, the equal-weight vector
-  (repeated to boost sampling frequency), and either a full grid (small
-  universes) or randomly sampled Dirichlet weight vectors
-  (`NUM_RANDOM_ACTIONS`, used here since there are 10 assets). **Note:**
-  this set is fixed once at construction (65 candidate portfolios total for
-  10 assets) and reproduced identically across training and evaluation via
-  a fixed seed — the agent selects among these fixed candidates rather than
-  learning an arbitrary continuous weight vector.
-- **Learning**: Double-DQN target computation, Smooth L1 loss, gradient
-  clipping, a cosine-annealed learning-rate schedule, and periodic
-  target-network syncing (`TARGET_UPDATE`).
-- **Checkpointing**: `save()`/`load()` persist the online/target networks,
-  optimizer, and scheduler state. `load()` uses `weights_only=True` to
-  avoid PyTorch's arbitrary-code-execution risk when loading checkpoints.
-
-### `mvo.py`
-
-Benchmark strategies to compare the DQN agents against.
-
-- `compute_mvo_weights()` — solves for the maximum-Sharpe long-only
-  portfolio (SLSQP) given a trailing return window.
-- `simulate_mvo()` — rebalances at a given frequency (daily/weekly/monthly)
-  using a trailing 252-day window, paying the same turnover-based
-  `TRANSACTION_FEE` cost as the DQN environment on each rebalance.
-- `simulate_naive()` — static equal-weight, buy-and-hold. No ongoing
-  transaction cost applies, since weights are never rebalanced after the
-  initial allocation.
-- `select_best_rebalance_freq()` — chooses the rebalance frequency by
-  comparing Sharpe ratios **on the validation split only**, so this
-  decision doesn't leak information from the test set.
-- `_performance_metrics()` — shared metrics computation (annualized return,
-  Sharpe ratio, max drawdown, daily return stats) used by both benchmarks
-  and the DQN evaluation.
-
-### `train.py`
-
-Training loop, run once per agent (`sharpe` and/or `return`).
-
-- Pre-fills the replay buffer with random transitions before training
-  starts.
-- Each episode samples a random contiguous `EPISODE_LENGTH`-day (504,
-  ≈2 years) window from the training set, so the agent experiences
-  multi-year dynamics (drawdowns, recoveries) during training rather than
-  only at evaluation time.
-- Updates the network every `UPDATE_EVERY` steps, decays ε after each
-  episode, and logs reward, portfolio return, gradient norm, and loss.
-- **Validation-based checkpointing**: every `VALIDATION_INTERVAL` episodes,
-  runs a greedy (ε=0) pass over the validation split and overwrites the
-  saved checkpoint only if validation Sharpe improves. This is the
-  mechanism that replaces "look at test results, then retune" as a
-  model-selection process.
-- Runs a final, separate **sanity check**: a greedy pass over the last
-  contiguous `EPISODE_LENGTH` days of the *training* set, to catch agents
-  that memorized random sub-windows instead of learning something that
-  holds up on a contiguous stretch. This is diagnostic only and does not
-  affect checkpoint selection.
-- Saves a JSON training history (including per-validation-pass Sharpe,
-  used later by `evaluate.py`'s plots).
-
-### `evaluate.py`
-
-Runs trained agents and benchmarks on the held-out test set and produces
-all reporting artifacts.
-
-- `evaluate_dqn()` — loads a checkpoint, runs the agent greedily (ε=0) over
-  whichever states/closes are passed in (the test split, in normal use),
-  and computes performance metrics.
-- `print_comparison_table()` — prints a side-by-side metrics table.
-- `plot_portfolio_values()` — normalized portfolio value over the test
-  period for every strategy → `portfolio_performance.png`.
-- `plot_drawdowns()` — drawdown-from-peak over time for every strategy →
-  `drawdowns.png`.
-- `plot_training_history()` — per-agent and combined plots of cumulative
-  reward, episode return, and gradient norm across training, with
-  validation-Sharpe checkpoints overlaid where available →
-  `training_history_<reward>.png` / `training_history.png`.
-- `save_results_txt()` — writes the full text report (per-strategy metrics
-  + comparison table + training history summary, including best validation
-  Sharpe) → `results_summary.txt`.
-
-### `main.py`
-
-Top-level entry point that wires everything together: train (unless
-`--skip-train`), select the MVO rebalance frequency on the validation set,
-load the test set, run both benchmarks, evaluate the selected DQN agent(s)
-on test, and produce all comparison tables/plots.
-
----
-
-## Known limitations / things to check before trusting results
-
-- **Currency mismatch**: the 10 tickers span three currencies (USD for
-  `SHEL`/`BP`/`TTE`/`EQNR`, EUR for `ENEL.MI`/`IBE.MC`/`RWE.DE`/`EOAN.DE`/`REP.MC`,
-  DKK for `ORSTED.CO`). `yfinance` returns each in its local/listing
-  currency, and the pipeline currently treats price columns as directly
-  comparable (e.g. in volume normalization and MVO's covariance estimate)
-  without FX conversion. This will distort return and covariance estimates
-  unless addressed.
-- **Fixed, small discrete action space**: with 10 assets, the DQN agents
-  choose among only 65 fixed candidate portfolios (10 one-hot + 5 duplicated
-  equal-weight + 50 Dirichlet(0.5) draws sampled once at startup), not a
-  continuous weight vector. `NUM_RANDOM_ACTIONS` in `config.py` can be
-  raised for finer resolution, at the cost of a larger action space to
-  learn over.
-- **Validation-set size**: at ~2 years, the validation split is short
-  relative to a full market cycle. Checkpoint selection and rebalance-
-  frequency selection based on it may still be somewhat noisy; a rolling/
-  expanding-window validation scheme would be a natural robustness
-  extension.
-- **Overfitting risk**: earlier versions of this pipeline showed DQN-Sharpe
-  test-set performance substantially worse than the naïve equal-weight
-  benchmark, with training episode returns that were extremely
-  high-variance (mean 711%, std 554%, min/max 14%/2714%) — more consistent
-  with the agent exploiting specific historical sub-windows than learning
-  a generalizable policy. The transaction-cost, concentration-penalty, and
-  now validation-based checkpointing fixes are intended to address this;
-  re-run training and check `results/train_history_*.json`'s `val_sharpe`
-  trend and the sanity-check output before drawing conclusions.
-- **Random episode sampling**: training episodes are drawn from random
-  504-day windows, which can over- or under-represent certain historical
-  regimes (e.g. the 2008 crash and recovery). Consider systematic/rolling
-  coverage of the training period if instability persists.
+Add a license of your choice (e.g. MIT) here.
