@@ -1,6 +1,6 @@
 # DQN Portfolio Management
 
-A reinforcement-learning approach to portfolio allocation, implementing and extending the paper *"Reinforcement Learning in Portfolio Management with Sharpe Ratio Rewarding Based Framework."* A Deep Q-Network (DQN) agent learns to allocate capital across a 10-asset European energy universe, trained on Sharpe-ratio and/or raw-return rewards, and benchmarked against Mean-Variance Optimization (MVO) and a naïve equal-weight buy-and-hold strategy.
+A reinforcement-learning approach to portfolio allocation. A Deep Q-Network (DQN) agent learns to allocate capital across a 10-asset European energy universe, trained on Sharpe-ratio and/or raw-return rewards, and benchmarked against Mean-Variance Optimization (MVO) and a naïve equal-weight buy-and-hold strategy.
 
 ## Results (Test Set: Nov 2019 – Nov 2021)
 
