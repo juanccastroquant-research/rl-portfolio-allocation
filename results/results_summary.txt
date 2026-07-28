@@ -1,0 +1,65 @@
+============================================================
+  DQN PORTFOLIO MANAGEMENT – FULL RESULTS SUMMARY
+  Generated: 2026-07-28 01:46:28
+============================================================
+
+[ INDIVIDUAL STRATEGY RESULTS ]
+
+============================================================
+  Strategy     : MVO
+  Annual Return: 0.1579  (15.79%)
+  Total Return : 0.3176  (31.76%)
+  Sharpe Ratio : 0.3630
+  Max Drawdown : 0.4277  (42.77%)
+  Daily Ret Std: 2.5372%
+  Daily Ret Min: -16.4656%
+  Daily Ret Max: 18.3350%
+============================================================
+============================================================
+  Strategy     : Naive
+  Annual Return: 0.1079  (10.79%)
+  Total Return : 0.2127  (21.27%)
+  Sharpe Ratio : 0.3237
+  Max Drawdown : 0.4043  (40.43%)
+  Daily Ret Std: 1.8733%
+  Daily Ret Min: -14.0782%
+  Daily Ret Max: 11.2409%
+============================================================
+============================================================
+  Strategy     : DQN-SHARPE
+  Annual Return: 0.2820  (28.20%)
+  Total Return : 0.5955  (59.55%)
+  Sharpe Ratio : 0.8069
+  Max Drawdown : 0.3747  (37.47%)
+  Daily Ret Std: 2.1100%
+  Daily Ret Min: -17.1229%
+  Daily Ret Max: 13.8020%
+============================================================
+
+[ COMPARISON TABLE ]
+
+Strategy          Annual Ret    Total Ret     Sharpe        MDD   DailyStd
+------------------------------------------------------------
+MVO                   15.79%        31.76%      0.3630      0.4277     2.5372%
+Naive                 10.79%        21.27%      0.3237      0.4043     1.8733%
+DQN-SHARPE            28.20%        59.55%      0.8069      0.3747     2.1100%
+------------------------------------------------------------
+
+[ TRAINING HISTORY SUMMARY ]
+
+  DQN-SHARPE
+    Episodes trained   : 800
+    Reward  – mean     : 25.8780
+    Reward  – std      : 15.9206
+    Reward  – min/max  : -19.6178 / 78.4047
+    Ep Ret  – mean     : 24.65%
+    Ep Ret  – std      : 14.71%
+    Ep Ret  – min/max  : -14.75% / 66.45%
+    Final ε            : 0.0500
+    GradNorm – mean    : 0.5940
+    GradNorm – final10 : 0.6452
+    Best Val Sharpe    : 0.7255 (episode 320)
+
+============================================================
+  END OF REPORT
+============================================================
